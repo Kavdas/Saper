@@ -46,6 +46,10 @@
   .c.wrong::after { content: "❌"; font-size: calc(var(--s) * .5); }
   .c.hint { animation: pulse .5s; }
   @keyframes pulse { 0% { background: var(--flag); } 100% { background: var(--cell); } }
+  #safeBtn.armed { background: var(--accent); color: #0b1020; }
+  #safeBtn:disabled { opacity: .45; cursor: default; }
+  .c.safe { animation: pulseSafe .6s; }
+  @keyframes pulseSafe { 0% { background: #5ee07a; } 100% { background: var(--open); } }
   .n1{color:#5ab0ff}.n2{color:#5ee07a}.n3{color:#ff6b6b}.n4{color:#b58cff}
   .n5{color:#ff9f43}.n6{color:#35d6d6}.n7{color:#e8ebf3}.n8{color:#8b93a7}
   #msg { min-height: 22px; font-size: 16px; }
@@ -61,17 +65,29 @@
       <option value="16,16,40">Любитель 16×16</option>
       <option value="30,16,99">Эксперт 30×16</option>
     </select>
+    <select id="help" title="Сколько безопасных ходов доступно">
+      <option value="1">Помощь: обычная</option>
+      <option value="0.5">Помощь: мало</option>
+      <option value="0">Без помощи</option>
+    </select>
+    <select id="start" title="Что открывает первый клик">
+      <option value="area">Старт: безопасная область</option>
+      <option value="cell">Старт: только клетка</option>
+    </select>
     <span class="stat" id="mines">💣 10</span>
     <button id="face" title="Новая игра">🙂</button>
     <span class="stat" id="time">⏱ 0</span>
   </div>
+  <div class="bar" style="padding:6px 10px">
+    <button id="safeBtn" title="Нажми, затем выбери цифру">🛡 Безопасный ход: 0</button>
+  </div>
   <div id="msg"></div>
   <div class="wrap"><div id="board"></div></div>
   <div class="help">
-    <b>ЛКМ</b> — открыть клетку (по цифре — открыть соседей, если флагов достаточно).<br>
-    <b>ПКМ по закрытой</b> — поставить/убрать флаг.<br>
-    <b>ПКМ по цифре</b> — автоматически ставит флаги на соседей, которые <b>точно</b> мины
-    (по одной цифре или сравнивая её с соседней цифрой, как в Dota 2).<br>
+    <b>ЛКМ</b> — открыть клетку; по цифре — открыть соседей, если флагов столько же.<br>
+    <b>ПКМ по закрытой</b> — флаг. <b>ПКМ по цифре</b> — флаги на соседей, которые точно мины.<br>
+    <b>🛡 Безопасный ход</b> — нажми кнопку, затем цифру: откроются соседи, которые точно безопасны.
+    Ходов ограниченное число, тратится только при успехе.<br>
     На телефоне: долгое нажатие = ПКМ.
   </div>
 
@@ -79,8 +95,10 @@
 (() => {
   const $ = id => document.getElementById(id);
   const boardEl = $('board'), levelEl = $('level'), minesEl = $('mines'),
-        timeEl = $('time'), faceEl = $('face'), msgEl = $('msg');
-  let W, H, M, cells, started, over, timer, seconds, opened;
+        timeEl = $('time'), faceEl = $('face'), msgEl = $('msg'),
+        helpEl = $('help'), startEl = $('start'), safeBtn = $('safeBtn');
+  let W, H, M, cells, started, over, timer, seconds, opened, charges, armed;
+  const BASE_CHARGES = { 81: 2, 256: 4, 480: 6 };
 
   const idx = (x, y) => y * W + x;
   const neighbors = i => {
@@ -96,7 +114,8 @@
   function newGame() {
     [W, H, M] = levelEl.value.split(',').map(Number);
     cells = Array.from({ length: W * H }, () => ({ mine: false, open: false, flag: false, n: 0 }));
-    started = over = false; seconds = 0; opened = 0;
+    started = over = armed = false; seconds = 0; opened = 0;
+    charges = Math.round(BASE_CHARGES[W * H] * +helpEl.value);
     clearInterval(timer);
     faceEl.textContent = '🙂'; msgEl.textContent = '';
     const size = Math.max(24, Math.min(36, Math.floor((window.innerWidth - 50) / W)));
@@ -112,7 +131,7 @@
   }
 
   function placeMines(safe) {
-    const banned = new Set([safe, ...neighbors(safe)]);
+    const banned = new Set(startEl.value === 'area' ? [safe, ...neighbors(safe)] : [safe]);
     const pool = [];
     for (let i = 0; i < W * H; i++) if (!banned.has(i)) pool.push(i);
     for (let k = 0; k < M; k++) {
@@ -129,6 +148,9 @@
     const flags = cells.filter(c => c.flag).length;
     minesEl.textContent = '💣 ' + (M - flags);
     timeEl.textContent = '⏱ ' + seconds;
+    safeBtn.textContent = '🛡 Безопасный ход: ' + charges;
+    safeBtn.disabled = charges <= 0 && !armed;
+    safeBtn.classList.toggle('armed', armed);
   }
 
   function render(i) {
@@ -196,53 +218,71 @@
       c.flag = !c.flag; render(i); updateStats(); return;
     }
     if (!c.n) return;
+    const { mines } = deduce(i);
     let changed = false;
-    const mark = j => {
+    mines.forEach(j => {
       if (cells[j].flag) return;
       cells[j].flag = true; render(j);
       boardEl.children[j].classList.add('hint');
       changed = true;
-    };
-    // оставшиеся мины и закрытые соседи цифры
-    const info = k => {
-      const nb = neighbors(k);
-      return {
-        left: cells[k].n - nb.filter(j => cells[j].flag).length,
-        hid: nb.filter(j => !cells[j].open && !cells[j].flag)
-      };
-    };
-    // повторяем, пока находятся новые гарантированные мины рядом с нажатой цифрой
-    let again = true;
-    while (again) {
-      again = false;
-      const before = cells.filter(x => x.flag).length;
-      const a = info(i);
-      // 1) одна цифра: закрытых ровно столько, сколько осталось мин
-      if (a.hid.length && a.hid.length === a.left) a.hid.forEach(mark);
-      // 2) две цифры: если закрытые A входят в закрытые B, то в разнице B\A
-      //    осталось (left_B - left_A) мин; если это равно её размеру — все мины
-      const near = new Set();
-      neighbors(i).forEach(j => neighbors(j).forEach(k => near.add(k)));
-      near.delete(i);
-      for (const k of near) {
-        if (!cells[k].open || !cells[k].n) continue;
-        const b = info(k), a2 = info(i);
-        for (const [p, q] of [[a2, b], [b, a2]]) {
-          if (!p.hid.length || !q.hid.length) continue;
-          const qs = new Set(q.hid);
-          if (!p.hid.every(x => qs.has(x))) continue;
-          const diff = q.hid.filter(x => !p.hid.includes(x));
-          if (diff.length && q.left - p.left === diff.length) diff.forEach(mark);
-        }
-      }
-      if (cells.filter(x => x.flag).length > before) again = true;
-    }
+    });
     if (changed) updateStats();
+  }
+
+  // оставшиеся мины и закрытые соседи цифры k
+  function info(k) {
+    const nb = neighbors(k);
+    return {
+      left: cells[k].n - nb.filter(j => cells[j].flag).length,
+      hid: nb.filter(j => !cells[j].open && !cells[j].flag)
+    };
+  }
+
+  // Гарантированные мины/безопасные клетки, выводимые из цифры i
+  // (одна цифра, либо i в паре с соседней цифрой). Флаги игрока считаются верными.
+  function deduce(i) {
+    const mines = new Set(), safe = new Set();
+    const a = info(i);
+    if (a.hid.length) {
+      if (a.left === a.hid.length) a.hid.forEach(j => mines.add(j));
+      if (a.left === 0) a.hid.forEach(j => safe.add(j));
+    }
+    const near = new Set();
+    neighbors(i).forEach(j => neighbors(j).forEach(k => near.add(k)));
+    near.delete(i);
+    for (const k of near) {
+      if (!cells[k].open || !cells[k].n) continue;
+      const b = info(k);
+      for (const [p, q] of [[a, b], [b, a]]) {
+        if (!p.hid.length || !q.hid.length) continue;
+        if (!p.hid.every(x => q.hid.includes(x))) continue;
+        const diff = q.hid.filter(x => !p.hid.includes(x));
+        if (!diff.length) continue;
+        const d = q.left - p.left;
+        if (d === diff.length) diff.forEach(j => mines.add(j));
+        if (d === 0) diff.forEach(j => safe.add(j));
+      }
+    }
+    return { mines, safe };
+  }
+
+  // Безопасный ход: открывает только то, что гарантированно без мин. Тратит заряд при успехе.
+  function safeMove(i) {
+    if (over) return;
+    const c = cells[i];
+    if (!c.open || !c.n) { msgEl.textContent = 'Выбери открытую цифру'; return; }
+    const { safe } = deduce(i);
+    if (!safe.size) { msgEl.textContent = 'Здесь нет гарантированно безопасных клеток'; return; }
+    msgEl.textContent = '';
+    charges--; armed = false;
+    safe.forEach(j => { if (!cells[j].open && !cells[j].flag) { reveal(j); boardEl.children[j].classList.add('safe'); } });
+    updateStats();
+    checkWin();
   }
 
   boardEl.addEventListener('mousedown', e => {
     const el = e.target.closest('.c'); if (!el) return;
-    if (e.button === 0) leftClick(+el.dataset.i);
+    if (e.button === 0) armed ? safeMove(+el.dataset.i) : leftClick(+el.dataset.i);
     else if (e.button === 2) rightClick(+el.dataset.i);
   });
   boardEl.addEventListener('contextmenu', e => e.preventDefault());
@@ -260,9 +300,15 @@
     cancelLP();
     if (lpFired) { e.preventDefault(); return; }
     const el = e.target.closest('.c');
-    if (el) { e.preventDefault(); leftClick(+el.dataset.i); }
+    if (el) { e.preventDefault(); armed ? safeMove(+el.dataset.i) : leftClick(+el.dataset.i); }
   });
 
+  safeBtn.addEventListener('click', () => {
+    if (over || (!armed && charges <= 0)) return;
+    armed = !armed; msgEl.textContent = armed ? 'Выбери цифру' : ''; updateStats();
+  });
+  helpEl.addEventListener('change', newGame);
+  startEl.addEventListener('change', newGame);
   faceEl.addEventListener('click', newGame);
   levelEl.addEventListener('change', newGame);
   newGame();
