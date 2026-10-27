@@ -65,6 +65,10 @@
       <option value="16,16,40">Любитель 16×16</option>
       <option value="30,16,99">Эксперт 30×16</option>
     </select>
+    <select id="mode" title="Режим игры">
+      <option value="normal">Режим: обычный</option>
+      <option value="timed">Режим: на время</option>
+    </select>
     <select id="help" title="Сколько безопасных ходов доступно">
       <option value="1">Помощь: обычная</option>
       <option value="0.5">Помощь: мало</option>
@@ -86,6 +90,7 @@
   <div class="help">
     <b>ЛКМ</b> — открыть клетку; по цифре — открыть соседей, если флагов столько же.<br>
     <b>ПКМ по закрытой</b> — флаг. <b>ПКМ по цифре</b> — флаги на соседей, которые точно мины.<br>
+    <b>Режим «на время»</b> — обратный отсчёт: 2 мин (9×9), 7 мин (16×16), 18 мин (30×16). Время вышло — проигрыш.<br>
     <b>🛡 Безопасный ход</b> — нажми кнопку, затем цифру: откроются соседи, которые точно безопасны.
     Ходов ограниченное число, тратится только при успехе.<br>
     На телефоне: долгое нажатие = ПКМ.
@@ -96,8 +101,10 @@
   const $ = id => document.getElementById(id);
   const boardEl = $('board'), levelEl = $('level'), minesEl = $('mines'),
         timeEl = $('time'), faceEl = $('face'), msgEl = $('msg'),
-        helpEl = $('help'), startEl = $('start'), safeBtn = $('safeBtn');
-  let W, H, M, cells, started, over, timer, seconds, opened, charges, armed;
+        helpEl = $('help'), modeEl = $('mode'), startEl = $('start'), safeBtn = $('safeBtn');
+  let W, H, M, cells, started, over, timer, seconds, opened, charges, armed, limit;
+  // лимит времени (сек) для режима «на время»: зависит от сложности
+  const TIME_LIMIT = { 81: 120, 256: 420, 480: 1080 };
   const BASE_CHARGES = { 81: 2, 256: 4, 480: 6 };
 
   const idx = (x, y) => y * W + x;
@@ -115,6 +122,7 @@
     [W, H, M] = levelEl.value.split(',').map(Number);
     cells = Array.from({ length: W * H }, () => ({ mine: false, open: false, flag: false, n: 0 }));
     started = over = armed = false; seconds = 0; opened = 0;
+    limit = modeEl.value === 'timed' ? TIME_LIMIT[W * H] : 0;
     charges = Math.round(BASE_CHARGES[W * H] * +helpEl.value);
     clearInterval(timer);
     faceEl.textContent = '🙂'; msgEl.textContent = '';
@@ -141,13 +149,18 @@
     }
     cells.forEach((c, i) => c.n = neighbors(i).filter(j => cells[j].mine).length);
     started = true;
-    timer = setInterval(() => { seconds++; timeEl.textContent = '⏱ ' + seconds; }, 1000);
+    timer = setInterval(() => {
+      seconds++;
+      if (limit && seconds >= limit) { seconds = limit; updateStats(); timeUp(); return; }
+      updateStats();
+    }, 1000);
   }
 
   function updateStats() {
     const flags = cells.filter(c => c.flag).length;
     minesEl.textContent = '💣 ' + (M - flags);
-    timeEl.textContent = '⏱ ' + seconds;
+    timeEl.textContent = limit ? '⏳ ' + fmt(limit - seconds) : '⏱ ' + seconds;
+    timeEl.style.color = limit && limit - seconds <= 10 ? 'var(--mine)' : '';
     safeBtn.textContent = '🛡 Безопасный ход: ' + charges;
     safeBtn.disabled = charges <= 0 && !armed;
     safeBtn.classList.toggle('armed', armed);
@@ -175,6 +188,13 @@
     }
   }
 
+  const fmt = t => Math.floor(t / 60) + ':' + String(t % 60).padStart(2, '0');
+
+  function timeUp() {
+    lose(-1);
+    msgEl.textContent = 'Время вышло! ⏳';
+  }
+
   function lose(hit) {
     over = true; clearInterval(timer);
     faceEl.textContent = '😵';
@@ -184,14 +204,14 @@
       if (c.mine && !c.flag) { el.className = 'c open mine'; el.textContent = ''; }
       else if (!c.mine && c.flag) { el.className = 'c open wrong'; el.textContent = ''; }
     });
-    boardEl.children[hit].classList.add('boom');
+    if (hit >= 0) boardEl.children[hit].classList.add('boom');
   }
 
   function checkWin() {
     if (over || opened !== W * H - M) return;
     over = true; clearInterval(timer);
     faceEl.textContent = '😎';
-    msgEl.textContent = `Победа! Время: ${seconds} с 🎉`;
+    msgEl.textContent = `Победа! Время: ${limit ? fmt(seconds) : seconds + ' с'} 🎉`;
     cells.forEach((c, i) => { if (c.mine && !c.flag) { c.flag = true; render(i); } });
     updateStats();
   }
@@ -307,6 +327,7 @@
     if (over || (!armed && charges <= 0)) return;
     armed = !armed; msgEl.textContent = armed ? 'Выбери цифру' : ''; updateStats();
   });
+  modeEl.addEventListener('change', newGame);
   helpEl.addEventListener('change', newGame);
   startEl.addEventListener('change', newGame);
   faceEl.addEventListener('click', newGame);
