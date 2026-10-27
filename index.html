@@ -52,6 +52,7 @@
   @keyframes pulseSafe { 0% { background: #5ee07a; } 100% { background: var(--open); } }
   .n1{color:#5ab0ff}.n2{color:#5ee07a}.n3{color:#ff6b6b}.n4{color:#b58cff}
   .n5{color:#ff9f43}.n6{color:#35d6d6}.n7{color:#e8ebf3}.n8{color:#8b93a7}
+  body, #board, .c { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
   #board, .c { touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
   .wrap { -webkit-overflow-scrolling: touch; touch-action: pan-x pan-y; }
   #flagBtn.armed { background: var(--flag); color: #1b1e27; }
@@ -286,6 +287,7 @@
       if (a.left === a.hid.length) a.hid.forEach(j => mines.add(j));
       if (a.left === 0) a.hid.forEach(j => safe.add(j));
     }
+    const radius = new Set(neighbors(i));
     const near = new Set();
     neighbors(i).forEach(j => neighbors(j).forEach(k => near.add(k)));
     near.delete(i);
@@ -295,10 +297,12 @@
       for (const [p, q] of [[a, b], [b, a]]) {
         if (!p.hid.length || !q.hid.length) continue;
         if (!p.hid.every(x => q.hid.includes(x))) continue;
-        const diff = q.hid.filter(x => !p.hid.includes(x));
-        if (!diff.length) continue;
+        const full = q.hid.filter(x => !p.hid.includes(x));
+        if (!full.length) continue;
         const d = q.left - p.left;
-        if (d === diff.length) diff.forEach(j => mines.add(j));
+        // отмечаем только клетки рядом с нажатой цифрой
+        const diff = full.filter(x => radius.has(x));
+        if (d === full.length) diff.forEach(j => mines.add(j));
         if (d === 0) diff.forEach(j => safe.add(j));
       }
     }
