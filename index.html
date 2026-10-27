@@ -97,7 +97,7 @@
   </div>
   <div class="bar" style="padding:6px 10px">
     <button id="flagBtn" title="Тап ставит флаг">🚩 Флаг: выкл</button>
-    <button id="safeBtn" title="Нажми, затем выбери цифру">🛡 Безопасный ход: 0</button>
+    <button id="safeBtn" title="Нажми, затем выбери закрытую клетку">🛡 Безопасный ход: 0</button>
   </div>
   <div id="msg"></div>
   <div class="wrap"><div id="board"></div></div>
@@ -105,8 +105,7 @@
     <b>ЛКМ</b> — открыть клетку; по цифре — открыть соседей, если флагов столько же.<br>
     <b>ПКМ по закрытой</b> — флаг. <b>ПКМ по цифре</b> — флаги на её соседей, если закрытых клеток вокруг ровно столько, сколько ей нужно мин (например, у двойки осталось две закрытые клетки).<br>
     <b>Режим «на время»</b> — обратный отсчёт: 2 мин (9×9), 7 мин (16×16), 18 мин (30×16). Время вышло — проигрыш.<br>
-    <b>🛡 Безопасный ход</b> — нажми кнопку, затем цифру: откроются соседи, которые точно безопасны.
-    Ходов ограниченное число, тратится только при успехе.<br>
+    <b>🛡 Безопасный ход</b> — нажми кнопку, затем закрытую клетку: если там мина, взрыва не будет, клетка получит флаг; если нет — откроется. Ходов ограниченное число.<br>
     На телефоне: тап = ЛКМ, долгое нажатие = ПКМ; кнопка «🚩 Флаг» переключает тап на флаги. Поле можно прокручивать пальцем.
   </div>
 
@@ -278,46 +277,31 @@
     };
   }
 
-  // Гарантированные мины/безопасные клетки, выводимые из цифры i
-  // (одна цифра, либо i в паре с соседней цифрой). Флаги игрока считаются верными.
+  // Мины, которые точно следуют из цифры i: закрытых соседей ровно столько, сколько осталось мин
   function deduce(i) {
-    const mines = new Set(), safe = new Set();
+    const mines = new Set();
     const a = info(i);
-    if (a.hid.length) {
-      if (a.left === a.hid.length) a.hid.forEach(j => mines.add(j));
-      if (a.left === 0) a.hid.forEach(j => safe.add(j));
-    }
-    const radius = new Set(neighbors(i));
-    const near = new Set();
-    neighbors(i).forEach(j => neighbors(j).forEach(k => near.add(k)));
-    near.delete(i);
-    for (const k of near) {
-      if (!cells[k].open || !cells[k].n) continue;
-      const b = info(k);
-      for (const [p, q] of [[a, b], [b, a]]) {
-        if (!p.hid.length || !q.hid.length) continue;
-        if (!p.hid.every(x => q.hid.includes(x))) continue;
-        const full = q.hid.filter(x => !p.hid.includes(x));
-        if (!full.length) continue;
-        const d = q.left - p.left;
-        // отмечаем только клетки рядом с нажатой цифрой
-        const diff = full.filter(x => radius.has(x));
-        if (d === 0) diff.forEach(j => safe.add(j));
-      }
-    }
-    return { mines, safe };
+    if (a.hid.length && a.left === a.hid.length) a.hid.forEach(j => mines.add(j));
+    return { mines };
   }
 
-  // Безопасный ход: открывает только то, что гарантированно без мин. Тратит заряд при успехе.
+  // Безопасный ход: выбираешь закрытую клетку. Если там мина — взрыва нет, клетка просто
+  // получает флаг. Если мины нет — клетка открывается как обычно. Заряд тратится в любом случае.
   function safeMove(i) {
     if (over) return;
     const c = cells[i];
-    if (!c.open || !c.n) { msgEl.textContent = 'Выбери открытую цифру'; return; }
-    const { safe } = deduce(i);
-    if (!safe.size) { msgEl.textContent = 'Здесь нет гарантированно безопасных клеток'; return; }
-    msgEl.textContent = '';
+    if (c.open || c.flag) { msgEl.textContent = 'Выбери закрытую клетку без флага'; return; }
+    if (!started) placeMines(i);
     charges--; armed = false;
-    safe.forEach(j => { if (!cells[j].open && !cells[j].flag) { reveal(j); boardEl.children[j].classList.add('safe'); } });
+    if (c.mine) {
+      c.flag = true; render(i);
+      boardEl.children[i].classList.add('safe');
+      msgEl.textContent = 'Тут была мина — клетка помечена флагом';
+    } else {
+      msgEl.textContent = '';
+      reveal(i);
+      boardEl.children[i].classList.add('safe');
+    }
     updateStats();
     checkWin();
   }
@@ -367,7 +351,7 @@
 
   safeBtn.addEventListener('click', () => {
     if (over || (!armed && charges <= 0)) return;
-    armed = !armed; msgEl.textContent = armed ? 'Выбери цифру' : ''; updateStats();
+    armed = !armed; msgEl.textContent = armed ? 'Выбери закрытую клетку' : ''; updateStats();
   });
   modeEl.addEventListener('change', newGame);
   helpEl.addEventListener('change', newGame);
@@ -377,6 +361,6 @@
   newGame();
 })();
 </script>
-  <div class="help" style="opacity:.5">v6</div>
+  <div class="help" style="opacity:.5">v7</div>
 </body>
 </html>
