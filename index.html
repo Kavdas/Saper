@@ -30,7 +30,7 @@
   .bar button:hover, .bar select:hover { background: var(--cell-hover); }
   .stat { font-variant-numeric: tabular-nums; font-size: 18px; min-width: 70px; text-align: center; }
   #face { font-size: 20px; padding: 6px 12px; }
-  .wrap { overflow: auto; max-width: 100%; padding: 4px; }
+  .wrap { overflow: auto; max-width: 100%; padding: 4px; flex: none; }
   #board { display: grid; gap: 2px; background: var(--panel); padding: 6px; border-radius: 10px; width: max-content; margin: 0 auto; }
   .c {
     width: var(--s); height: var(--s); border-radius: 4px; background: var(--cell);
@@ -52,6 +52,18 @@
   @keyframes pulseSafe { 0% { background: #5ee07a; } 100% { background: var(--open); } }
   .n1{color:#5ab0ff}.n2{color:#5ee07a}.n3{color:#ff6b6b}.n4{color:#b58cff}
   .n5{color:#ff9f43}.n6{color:#35d6d6}.n7{color:#e8ebf3}.n8{color:#8b93a7}
+  #board, .c { touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
+  .wrap { -webkit-overflow-scrolling: touch; touch-action: pan-x pan-y; }
+  #flagBtn.armed { background: var(--flag); color: #1b1e27; }
+  @media (max-width: 600px) {
+    body { padding: 8px; gap: 8px; padding-bottom: max(8px, env(safe-area-inset-bottom)); }
+    h1 { font-size: 18px; }
+    .bar { gap: 6px; padding: 8px; width: 100%; }
+    .bar select { flex: 1 1 44%; min-width: 0; font-size: 14px; padding: 9px 8px; }
+    .bar button { padding: 10px 12px; }
+    .stat { font-size: 17px; min-width: 64px; }
+    .help { font-size: 12px; }
+  }
   #msg { min-height: 22px; font-size: 16px; }
   .help { color: var(--muted); font-size: 13px; max-width: 560px; line-height: 1.5; text-align: center; }
   .help b { color: var(--text); font-weight: 600; }
@@ -83,6 +95,7 @@
     <span class="stat" id="time">⏱ 0</span>
   </div>
   <div class="bar" style="padding:6px 10px">
+    <button id="flagBtn" title="Тап ставит флаг">🚩 Флаг: выкл</button>
     <button id="safeBtn" title="Нажми, затем выбери цифру">🛡 Безопасный ход: 0</button>
   </div>
   <div id="msg"></div>
@@ -93,7 +106,7 @@
     <b>Режим «на время»</b> — обратный отсчёт: 2 мин (9×9), 7 мин (16×16), 18 мин (30×16). Время вышло — проигрыш.<br>
     <b>🛡 Безопасный ход</b> — нажми кнопку, затем цифру: откроются соседи, которые точно безопасны.
     Ходов ограниченное число, тратится только при успехе.<br>
-    На телефоне: долгое нажатие = ПКМ.
+    На телефоне: тап = ЛКМ, долгое нажатие = ПКМ; кнопка «🚩 Флаг» переключает тап на флаги. Поле можно прокручивать пальцем.
   </div>
 
 <script>
@@ -101,8 +114,8 @@
   const $ = id => document.getElementById(id);
   const boardEl = $('board'), levelEl = $('level'), minesEl = $('mines'),
         timeEl = $('time'), faceEl = $('face'), msgEl = $('msg'),
-        helpEl = $('help'), modeEl = $('mode'), startEl = $('start'), safeBtn = $('safeBtn');
-  let W, H, M, cells, started, over, timer, seconds, opened, charges, armed, limit;
+        helpEl = $('help'), modeEl = $('mode'), startEl = $('start'), safeBtn = $('safeBtn'), flagBtn = $('flagBtn');
+  let W, H, M, cells, started, over, timer, seconds, opened, charges, armed, limit, flagMode = false;
   // лимит времени (сек) для режима «на время»: зависит от сложности
   const TIME_LIMIT = { 81: 120, 256: 420, 480: 1080 };
   const BASE_CHARGES = { 81: 2, 256: 4, 480: 6 };
@@ -118,6 +131,13 @@
     return res;
   };
 
+  // размер клетки под ширину экрана; на узких экранах поле можно прокручивать
+  function fitSize() {
+    const size = Math.max(26, Math.min(36, Math.floor((window.innerWidth - 40) / W)));
+    boardEl.style.setProperty('--s', size + 'px');
+  }
+  window.addEventListener('resize', () => { if (cells) fitSize(); });
+
   function newGame() {
     [W, H, M] = levelEl.value.split(',').map(Number);
     cells = Array.from({ length: W * H }, () => ({ mine: false, open: false, flag: false, n: 0 }));
@@ -126,8 +146,7 @@
     charges = Math.round(BASE_CHARGES[W * H] * +helpEl.value);
     clearInterval(timer);
     faceEl.textContent = '🙂'; msgEl.textContent = '';
-    const size = Math.max(24, Math.min(36, Math.floor((window.innerWidth - 50) / W)));
-    boardEl.style.setProperty('--s', size + 'px');
+    fitSize();
     boardEl.style.gridTemplateColumns = `repeat(${W}, var(--s))`;
     boardEl.innerHTML = '';
     for (let i = 0; i < W * H; i++) {
@@ -307,20 +326,40 @@
   });
   boardEl.addEventListener('contextmenu', e => e.preventDefault());
 
-  // долгое нажатие на телефоне = ПКМ
-  let lpTimer, lpFired = false;
+  // телефон: тап = ЛКМ (или флаг в режиме «Флаг»), долгое нажатие = ПКМ; прокрутка не нажимает клетки
+  let lpTimer, lpFired = false, moved = false, tx = 0, ty = 0;
+  const tap = i => {
+    if (armed) safeMove(i);
+    else if (flagMode) rightClick(i);
+    else leftClick(i);
+  };
   boardEl.addEventListener('touchstart', e => {
     const el = e.target.closest('.c'); if (!el) return;
-    lpFired = false;
-    lpTimer = setTimeout(() => { lpFired = true; rightClick(+el.dataset.i); navigator.vibrate && navigator.vibrate(30); }, 350);
+    lpFired = moved = false;
+    tx = e.touches[0].clientX; ty = e.touches[0].clientY;
+    lpTimer = setTimeout(() => {
+      lpFired = true; flagMode ? leftClick(+el.dataset.i) : rightClick(+el.dataset.i);
+      navigator.vibrate && navigator.vibrate(30);
+    }, 350);
   }, { passive: true });
   const cancelLP = () => clearTimeout(lpTimer);
-  boardEl.addEventListener('touchmove', cancelLP, { passive: true });
+  boardEl.addEventListener('touchmove', e => {
+    if (Math.abs(e.touches[0].clientX - tx) + Math.abs(e.touches[0].clientY - ty) > 10) { moved = true; cancelLP(); }
+  }, { passive: true });
+  boardEl.addEventListener('touchcancel', cancelLP);
   boardEl.addEventListener('touchend', e => {
     cancelLP();
-    if (lpFired) { e.preventDefault(); return; }
+    if (moved) return;
+    e.preventDefault();
+    if (lpFired) return;
     const el = e.target.closest('.c');
-    if (el) { e.preventDefault(); armed ? safeMove(+el.dataset.i) : leftClick(+el.dataset.i); }
+    if (el) tap(+el.dataset.i);
+  });
+
+  flagBtn.addEventListener('click', () => {
+    flagMode = !flagMode;
+    flagBtn.textContent = '🚩 Флаг: ' + (flagMode ? 'вкл' : 'выкл');
+    flagBtn.classList.toggle('armed', flagMode);
   });
 
   safeBtn.addEventListener('click', () => {
