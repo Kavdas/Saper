@@ -116,7 +116,6 @@
         timeEl = $('time'), faceEl = $('face'), msgEl = $('msg'),
         helpEl = $('help'), modeEl = $('mode'), startEl = $('start'), safeBtn = $('safeBtn'), flagBtn = $('flagBtn');
   let W, H, M, cells, started, over, timer, seconds, opened, charges, armed, limit, flagMode = false;
-  // лимит времени (сек) для режима «на время»: зависит от сложности
   const TIME_LIMIT = { 81: 120, 256: 420, 480: 1080 };
   const BASE_CHARGES = { 81: 2, 256: 4, 480: 6 };
 
@@ -131,7 +130,6 @@
     return res;
   };
 
-  // размер клетки под ширину экрана; на узких экранах поле можно прокручивать
   function fitSize() {
     const size = Math.max(26, Math.min(36, Math.floor((window.innerWidth - 40) / W)));
     boardEl.style.setProperty('--s', size + 'px');
@@ -241,7 +239,6 @@
     if (c.flag) return;
     if (!started) placeMines(i);
     if (c.open) {
-      // chord: открыть соседей, если флагов ровно столько, сколько цифра
       if (!c.n) return;
       const nb = neighbors(i);
       if (nb.filter(j => cells[j].flag).length !== c.n) return;
@@ -257,9 +254,8 @@
       c.flag = !c.flag; render(i); updateStats(); return;
     }
     if (!c.n) return;
-    const { mines } = deduce(i);
     let changed = false;
-    mines.forEach(j => {
+    certainMines(i).forEach(j => {
       if (cells[j].flag) return;
       cells[j].flag = true; render(j);
       boardEl.children[j].classList.add('hint');
@@ -268,7 +264,6 @@
     if (changed) updateStats();
   }
 
-  // оставшиеся мины и закрытые соседи цифры k
   function info(k) {
     const nb = neighbors(k);
     return {
@@ -277,16 +272,11 @@
     };
   }
 
-  // Мины, которые точно следуют из цифры i: закрытых соседей ровно столько, сколько осталось мин
-  function deduce(i) {
-    const mines = new Set();
+  function certainMines(i) {
     const a = info(i);
-    if (a.hid.length && a.left === a.hid.length) a.hid.forEach(j => mines.add(j));
-    return { mines };
+    return a.hid.length && a.left === a.hid.length ? a.hid : [];
   }
 
-  // Безопасный ход: выбираешь закрытую клетку. Если там мина — взрыва нет, клетка просто
-  // получает флаг. Если мины нет — клетка открывается как обычно. Заряд тратится в любом случае.
   function safeMove(i) {
     if (over) return;
     const c = cells[i];
@@ -313,7 +303,6 @@
   });
   boardEl.addEventListener('contextmenu', e => e.preventDefault());
 
-  // телефон: тап = ЛКМ (или флаг в режиме «Флаг»), долгое нажатие = ПКМ; прокрутка не нажимает клетки
   let lpTimer, lpFired = false, moved = false, tx = 0, ty = 0;
   const tap = i => {
     if (armed) safeMove(i);
@@ -361,6 +350,5 @@
   newGame();
 })();
 </script>
-  <div class="help" style="opacity:.5">v7</div>
 </body>
 </html>
